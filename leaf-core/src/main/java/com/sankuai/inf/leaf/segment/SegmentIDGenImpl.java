@@ -137,6 +137,7 @@ public class SegmentIDGenImpl implements IDGen {
         }
         if (cache.containsKey(key)) {
             SegmentBuffer buffer = cache.get(key);
+            // 双重检查
             if (!buffer.isInitOk()) {
                 synchronized (buffer) {
                     if (!buffer.isInitOk()) {
@@ -150,6 +151,7 @@ public class SegmentIDGenImpl implements IDGen {
                     }
                 }
             }
+            // 获取id
             return getIdFromSegmentBuffer(cache.get(key));
         }
         return new Result(EXCEPTION_ID_KEY_NOT_EXISTS, Status.EXCEPTION);
@@ -204,6 +206,7 @@ public class SegmentIDGenImpl implements IDGen {
             buffer.rLock().lock();
             try {
                 final Segment segment = buffer.getCurrent();
+                // 需要去拿下一个号段, 用了10%就会去拿
                 if (!buffer.isNextReady() && (segment.getIdle() < 0.9 * segment.getStep()) && buffer.getThreadRunning().compareAndSet(false, true)) {
                     service.execute(new Runnable() {
                         @Override
@@ -236,14 +239,18 @@ public class SegmentIDGenImpl implements IDGen {
             } finally {
                 buffer.rLock().unlock();
             }
+            // 当前号段都用完了,才会到这里
             waitAndSleep(buffer);
+            // 加写锁
             buffer.wLock().lock();
             try {
+                // 有线程已经把当前号段更新了, 所以可以拿到新值
                 final Segment segment = buffer.getCurrent();
                 long value = segment.getValue().getAndIncrement();
                 if (value < segment.getMax()) {
                     return new Result(value, Status.SUCCESS);
                 }
+                // 下一个号段准备好了, 直接切换, 因为加了写锁, 只有一个会进来. 当写锁释放后, 其他的在上面就直接返回了
                 if (buffer.isNextReady()) {
                     buffer.switchPos();
                     buffer.setNextReady(false);
